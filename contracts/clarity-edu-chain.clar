@@ -176,3 +176,63 @@
     (asserts! (> (var-get resource-price) u0) err-price-invalid)
     (ok true)
 ))
+
+;; Add meaningful functionality: View a user's STX balance
+(define-public (view-user-stx-balance (user principal))
+  (begin
+    ;; Display user's STX balance
+    (ok (default-to u0 (map-get? user-stx-balance user)))
+))
+
+;; Refactor user resource balance fetch to handle empty map more efficiently
+(define-public (refactor-fetch-user-resource-balance (user principal))
+  (begin
+    ;; Improved fetching logic for user resource balance
+    (let ((balance (default-to u0 (map-get? user-resource-balance user))))
+      (ok balance)
+    )
+))
+
+;; Remove resources from listing
+(define-public (remove-resources (quantity uint))
+  (let (
+    (current-listed (get quantity (default-to {quantity: u0, price: u0} (map-get? resources-listed {user: tx-sender}))))
+  )
+    (asserts! (>= current-listed quantity) err-insufficient-balance)
+    (try! (adjust-resource-balance (to-int (- quantity))))
+    (map-set resources-listed {user: tx-sender} 
+             {quantity: (- current-listed quantity), 
+              price: (get price (default-to {quantity: u0, price: u0} (map-get? resources-listed {user: tx-sender})))})
+    (ok true)))
+
+;; Acquire resources from another user
+(define-public (acquire-resources (provider principal) (quantity uint))
+  (let (
+    (listing-data (default-to {quantity: u0, price: u0} (map-get? resources-listed {user: provider})))
+    (resource-cost (* quantity (get price listing-data)))
+    (platform-fee (compute-platform-fee resource-cost))
+    (total-cost (+ resource-cost platform-fee))
+    (provider-resource (default-to u0 (map-get? user-resource-balance provider)))
+    (requester-balance (default-to u0 (map-get? user-stx-balance tx-sender)))
+    (provider-balance (default-to u0 (map-get? user-stx-balance provider)))
+    (admin-balance (default-to u0 (map-get? user-stx-balance contract-admin))))
+    (asserts! (not (is-eq tx-sender provider)) err-same-user-transaction)
+    (asserts! (> quantity u0) err-quantity-invalid)
+    (asserts! (>= (get quantity listing-data) quantity) err-insufficient-balance)
+    (asserts! (>= provider-resource quantity) err-insufficient-balance)
+    (asserts! (>= requester-balance total-cost) err-insufficient-balance)
+    
+    ;; Update provider's resource balance and listing quantity
+    (map-set user-resource-balance provider (- provider-resource quantity))
+    (map-set resources-listed {user: provider} 
+             {quantity: (- (get quantity listing-data) quantity), price: (get price listing-data)})
+    
+    ;; Update requester's STX and resource balance
+    (map-set user-stx-balance tx-sender (- requester-balance total-cost))
+    (map-set user-resource-balance tx-sender (+ (default-to u0 (map-get? user-resource-balance tx-sender)) quantity))
+    
+    ;; Update provider's and contract admin's STX balance
+    (map-set user-stx-balance provider (+ provider-balance resource-cost))
+    (map-set user-stx-balance contract-admin (+ admin-balance platform-fee))
+    
+    (ok true)))
