@@ -236,3 +236,67 @@
     (map-set user-stx-balance contract-admin (+ admin-balance platform-fee))
     
     (ok true)))
+
+;; Request resource reimbursement
+(define-public (request-reimbursement (quantity uint))
+  (let (
+    (user-resource (default-to u0 (map-get? user-resource-balance tx-sender)))
+    (reimbursement-amount (compute-reimbursement quantity))
+    (contract-stx-balance (default-to u0 (map-get? user-stx-balance contract-admin))))
+    (asserts! (> quantity u0) err-quantity-invalid)
+    (asserts! (>= user-resource quantity) err-insufficient-balance)
+    (asserts! (>= contract-stx-balance reimbursement-amount) err-refund-issue)
+    
+    ;; Update user's resource balance
+    (map-set user-resource-balance tx-sender (- user-resource quantity))
+    
+    ;; Update user's and contract admin's STX balance
+    (map-set user-stx-balance tx-sender (+ (default-to u0 (map-get? user-stx-balance tx-sender)) reimbursement-amount))
+    (map-set user-stx-balance contract-admin (- contract-stx-balance reimbursement-amount))
+    
+    ;; Return reimbursed resource to contract admin's balance
+    (map-set user-resource-balance contract-admin (+ (default-to u0 (map-get? user-resource-balance contract-admin)) quantity))
+    
+    ;; Update resource balance
+    (try! (adjust-resource-balance (to-int (- quantity))))
+    
+    (ok true)))
+
+;; User Functions
+;; List resources for sharing
+(define-public (list-resources (quantity uint) (price uint))
+  (let (
+    (current-balance (default-to u0 (map-get? user-resource-balance tx-sender)))
+    (current-listed (get quantity (default-to {quantity: u0, price: u0} (map-get? resources-listed {user: tx-sender}))))
+    (new-listing (+ quantity current-listed)))
+    (asserts! (> quantity u0) err-quantity-invalid)
+    (asserts! (> price u0) err-price-invalid)
+    (asserts! (>= current-balance new-listing) err-insufficient-balance)
+    (try! (adjust-resource-balance (to-int quantity)))
+    (map-set resources-listed {user: tx-sender} {quantity: new-listing, price: price})
+    (ok true)))
+
+;; ----------------------------------
+;; Read-Only Functions
+;; ----------------------------------
+
+;; Fetch the current resource price
+(define-read-only (fetch-resource-price)
+  (ok (var-get resource-price)))
+
+;; Fetch the platform fee rate
+(define-read-only (fetch-platform-fee)
+  (ok (var-get platform-fee-rate)))
+
+;; Fetch the reimbursement rate
+(define-read-only (fetch-reimbursement-rate)
+  (ok (var-get reimbursement-rate)))
+
+;; Fetch a user's resource balance
+(define-read-only (fetch-user-resource-balance (user principal))
+  (ok (default-to u0 (map-get? user-resource-balance user))))
+
+;; Fetch a user's STX balance
+(define-read-only (fetch-user-stx-balance (user principal))
+  (ok (default-to u0 (map-get? user-stx-balance user))))
+
